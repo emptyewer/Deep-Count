@@ -1,61 +1,128 @@
 #include "deepcount.h"
 #include "fileio/read_mat.h"
+#include "fileio/write.h"
 #include "filter/kalman.hpp"
 #include "helpers/filtering.h"
 #include "ui_deepcount.h"
-#include <Eigen/Dense>
-#include <iostream>
-#include <vector>
+#include <QFileDialog>
 
 DeepCount::DeepCount(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::DeepCount) {
   ui->setupUi(this);
   setCustomStyle();
   current_frame = 0;
-  get_aois();
-  setup_plots();
+  current_file = 0;
+  enable_all = false;
+}
+
+void DeepCount::on_load_directory_clicked() {
+  QString dir = QFileDialog::getExistingDirectory(
+      this, tr("Choose Directory"), "~",
+      QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+  if (dir != NULL) {
+    listFiles(QDir(dir), &file_list);
+    enable_all = true;
+  }
+  ui->root_dir->setText(dir);
+  read_aois();
+  display_aoi();
+  //  foreach (QString str, file_list) { qDebug() << str; }
+}
+
+void DeepCount::listFiles(QDir root_dir, QList<QString> *dir_list) {
+  QDir dir(root_dir);
+  QFileInfoList list =
+      dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+  foreach (QFileInfo finfo, list) {
+    if (finfo.suffix() == "dat") {
+      dir_list->append(finfo.absoluteFilePath());
+    }
+    if (finfo.isDir()) {
+      listFiles(QDir(finfo.absoluteFilePath()), dir_list);
+    }
+  }
+}
+
+void DeepCount::read_aois() {
+  bool processed = false;
+  foreach (QString s, Write().get_processed_files()) {
+    if (QString::compare(s, file_list[current_file], Qt::CaseSensitive) == 0) {
+      processed = true;
+      ui->statusBar->showMessage("Skipped over already processed files...",
+                                 5000);
+    }
+  }
+
+  if (processed) {
+    current_file += 1;
+    read_aois();
+  } else {
+    current_aoi_count = Write().get_processed_aoi_count();
+    if (current_aoi_count == 0) {
+      current_aoi_count = 0;
+    }
+    ReadMat read_mat_files = ReadMat::ReadMat();
+    QString str;
+    QTextStream(&str) << current_file + 1 << " of " << file_list.size();
+    ui->number_of_files->setText(str);
+    ui->current_dir->setText(
+        QFileInfo(file_list[current_file]).dir().dirName());
+    ui->file_name->setText(QFileInfo(file_list[current_file]).fileName());
+    QByteArray file_name = file_list[current_file].toLocal8Bit();
+    char *file_name_buffer = file_name.data();
+    aois = read_mat_files.read_aois(file_name_buffer);
+    Filtering filter = Filtering();
+    //    qDebug() << "Begin Filtering";
+    for (unsigned long i = 0; i < read_mat_files.get_number_of_aois(); i++) {
+      filter.kalman_filter(&aois[i]);
+      //      qDebug() << "Kalman";
+      filter.fft(&aois[i]);
+      //      qDebug() << "FFT";
+      filter.normalize(&aois[i]);
+      //      qDebug() << "Normalize";
+      filter.calculate_histogram(&aois[i]);
+      //      qDebug() << "Y Histogram";
+      filter.subtract_consecutive_intensities(&aois[i]);
+      //      qDebug() << "X_ Subtract";
+      filter.reduce_dimensionality(&aois[i]);
+      //      qDebug() << "X Histogram";
+    }
+    //    qDebug() << "Finished Filtering";
+  }
+}
+
+void DeepCount::display_aoi() {
+  QString str;
+  QTextStream(&str) << current_frame + 1 << " of " << aois.size();
+  ui->numbe_of_aois->setText(str);
+  if (aois[current_frame].classified != true) {
+    ui->classified->setText(QString::number(current_aoi_count));
+  }
   plot();
   refresh_plots();
   update_step_count();
 }
 
-void DeepCount::get_aois() {
-  ReadMat read_mat_files = ReadMat::ReadMat();
-  aois = read_mat_files.read_aois("/Users/Venky/Work/Softwares/Photobleaching/"
-                                  "Experimental Data/Jason Data/Organized "
-                                  "Liposomes/20151112 IWIW "
-                                  "Photobleaching/3.10.0ugpermg_IWIW.dat");
-  Filtering filter = Filtering();
-  for (unsigned long i = 0; i < read_mat_files.get_number_of_aois(); i++) {
-    filter.kalman_filter(&aois[i]);
-    //    filter.fft(&aois[i]);
-    filter.normalize(&aois[i]);
-    filter.calculate_histogram(&aois[i]);
-    filter.subtract_consecutive_intensities(&aois[i]);
-    filter.reduce_dimensionality(&aois[i]);
-  }
-}
-
 void DeepCount::plot() {
+  std::vector<double> range;
+  unsigned int i = 0;
+  for (i = 0; i < 100; i++) {
+    range.push_back(static_cast<double>(i));
+  }
   QVector<double> xvalues =
       QVector<double>::fromStdVector(aois[current_frame].x);
-  QVector<double> ave_xvalues =
-      QVector<double>::fromStdVector(aois[current_frame].average_x);
+  QVector<double> ave_xvalues = QVector<double>::fromStdVector(range);
   QVector<double> intensity =
       QVector<double>::fromStdVector(aois[current_frame].intensity);
-  QVector<double> fft_yvalues =
-      QVector<double>::fromStdVector(aois[current_frame].average_kf_intensity);
   QVector<double> xhist = QVector<double>::fromStdVector(
-      aois[current_frame].average_x_intensity_reduced);
+      aois[current_frame].fft_x_intensity_histogram);
   QVector<double> yhist = QVector<double>::fromStdVector(
-      aois[current_frame].average_y_intensity_histogram);
-  ui->trace_plot->addGraph();
-  ui->trace_plot->graph(0)->setData(xvalues, intensity);
-  ui->trace_plot->graph(0)->setPen(QPen(QColor(120, 120, 120, 255)));
+      aois[current_frame].fft_y_intensity_histogram);
 
   ui->trace_plot->addGraph();
-  ui->trace_plot->graph(1)->setData(xvalues, fft_yvalues);
-  ui->trace_plot->graph(1)->setPen(QPen(QColor(0, 189, 242, 255), 3));
+  ui->trace_plot->graph(0)->setData(xvalues, intensity);
+  ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255)));
 
   ui->trace_plot->xAxis->setLabel("Time (*)");
   ui->trace_plot->yAxis->setLabel("Intensity");
@@ -120,23 +187,33 @@ void DeepCount::on_next_clicked() {
   record_selection();
   if (current_frame < aois.size() - 1) {
     current_frame += 1;
+    if (aois[current_frame].classified != true) {
+      current_aoi_count += 1;
+    }
+  } else {
+    Write().data_to_file(&aois);
+    Write().processed_to_file(file_list[current_file]);
+    ui->statusBar->showMessage("Saving data and current progress.", 5000);
+    aois.clear();
+    current_file += 1;
+    read_aois();
+    current_frame = 0;
   }
   clear_graphs();
-  plot();
-  refresh_plots();
-  update_step_count();
+  display_aoi();
 }
 
 void DeepCount::on_previous_clicked() {
   if (current_frame == 0) {
     current_frame = 0;
   } else {
+    if (aois[current_frame].classified != true) {
+      current_aoi_count -= 1;
+    }
     current_frame -= 1;
   }
   clear_graphs();
-  plot();
-  refresh_plots();
-  update_step_count();
+  display_aoi();
 }
 
 void DeepCount::setCustomStyle() {
@@ -151,36 +228,68 @@ void DeepCount::setCustomStyle() {
 }
 
 void DeepCount::keyPressEvent(QKeyEvent *event) {
-  switch (event->key()) {
-  case 16777236:
+  if (enable_all) {
+    std::vector<double> range;
+    unsigned int i = 0;
+    for (i = 0; i < 100; i++) {
+      range.push_back(static_cast<double>(i));
+    }
+    QVector<double> xvalues =
+        QVector<double>::fromStdVector(aois[current_frame].x);
+    QVector<double> fft_intensity = QVector<double>::fromStdVector(
+        aois[current_frame].fft_intensity_normalized);
+    QVector<double> intensity =
+        QVector<double>::fromStdVector(aois[current_frame].intensity);
+    switch (event->key()) {
+    case 16777235: // UP
+      ui->trace_plot->graph(0)->clearData();
+      ui->trace_plot->graph(0)->setData(xvalues, fft_intensity);
+      ui->trace_plot->graph(0)->setPen(QPen(QColor(0, 189, 242, 255)));
+      refresh_plots();
+      break;
+    case 16777237: // Down
+      ui->trace_plot->graph(0)->clearData();
+      ui->trace_plot->graph(0)->setData(xvalues, intensity);
+      ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255)));
+      refresh_plots();
+      break;
+    case 16777236:
       on_next_clicked();
-    break;
-  case 16777234:
+      break;
+    case 16777234:
       on_previous_clicked();
-    break;
-  case 48:
-    ui->zero_step->setChecked(true);
-    break;
-  case 49:
-    ui->one_step->setChecked(true);
-    break;
-  case 50:
-    ui->two_step->setChecked(true);
-    break;
-  case 51:
-    ui->three_step->setChecked(true);
-    break;
-  case 52:
-    ui->four_step->setChecked(true);
-    break;
-  case 53:
-    ui->five_step->setChecked(true);
-    break;
-  case 83:
-    ui->skip_step->setChecked(true);
-    break;
-  default:
-    break;
+      break;
+    case 48:
+      ui->zero_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 49:
+      ui->one_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 50:
+      ui->two_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 51:
+      ui->three_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 52:
+      ui->four_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 53:
+      ui->five_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    case 83:
+      ui->skip_step->setChecked(true);
+      ui->step_count_group->setChecked(true);
+      break;
+    default:
+      break;
+    }
   }
 }
 
@@ -205,17 +314,18 @@ void DeepCount::update_step_count() {
     case 5:
       ui->five_step->setChecked(true);
       break;
-    case 9:
+    case 6:
       ui->skip_step->setChecked(true);
       break;
     default:
       break;
     }
     ui->step_count_group->setTitle("Steps (Classified)");
+    ui->step_count_group->setChecked(true);
+  } else {
+    ui->step_count_group->setTitle("Steps");
+    ui->step_count_group->setChecked(false);
   }
-  else {
-      ui->step_count_group->setTitle("Steps");
-    }
 }
 
 void DeepCount::record_selection() {
@@ -236,7 +346,7 @@ void DeepCount::record_selection() {
       } else if (list[i]->objectName() == "five_step") {
         aois[current_frame].step_number = 5;
       } else if (list[i]->objectName() == "skip_step") {
-        aois[current_frame].step_number = 9;
+        aois[current_frame].step_number = 6;
       }
     }
     if (aois[current_frame].classified == false) {

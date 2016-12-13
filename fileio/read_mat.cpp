@@ -3,8 +3,7 @@
 
 ReadMat::ReadMat() {}
 
-std::vector<aoi>
-ReadMat::read_aois(const char *inputfile) {
+std::vector<aoi> ReadMat::read_aois(const char *inputfile) {
   int err = 0;
   mat_t *mat_file;
   matvar_t *aoifits;
@@ -17,7 +16,8 @@ ReadMat::read_aois(const char *inputfile) {
       err = 1;
     } else {
       matvar_t **fields = static_cast<matvar_t **>(aoifits->data);
-      unsigned long nfields = aoifits->nbytes / static_cast<unsigned long>(aoifits->data_size);
+      unsigned long nfields =
+          aoifits->nbytes / static_cast<unsigned long>(aoifits->data_size);
       for (unsigned long i = 0; i < nfields; i++) {
         if (std::string(fields[i]->name).compare("centers") == 0) {
           number_of_aois = fields[i]->dims[0];
@@ -32,9 +32,11 @@ ReadMat::read_aois(const char *inputfile) {
           //          qDebug() << "Class Type : " << fields[i]->class_type;
           //          qDebug() << "Rank : " << fields[i]->rank;
           unsigned long count = 0;
-          for (unsigned long k = 0; k < static_cast<unsigned long>(fields[i]->dims[0]); k++) {
-            aois[count].intensity.push_back(
-                static_cast<double *>(fields[i]->data)[fields[i]->dims[0] * (fields[i]->dims[1] - 1) + k]);
+          for (unsigned long k = 0;
+               k < static_cast<unsigned long>(fields[i]->dims[0]); k++) {
+            aois[count].intensity.push_back(static_cast<double *>(
+                fields[i]
+                    ->data)[fields[i]->dims[0] * (fields[i]->dims[1] - 1) + k]);
             count += 1;
             if (count == number_of_aois) {
               count = 0;

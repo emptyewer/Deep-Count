@@ -8,11 +8,14 @@ struct aoi {
   std::vector<double> x;
   std::vector<double> intensity;
   std::vector<double> fft_intensity;
-  std::vector<double> average_x;
-  std::vector<double> average_kf_intensity;
-  std::vector<double> average_intensity_normalized;
-  std::vector<double> average_intensity_subtracted;
-  std::vector<double> average_y_intensity_histogram;
-  std::vector<double> average_x_intensity_reduced;
+  std::vector<double> fft_intensity_normalized;
+  std::vector<double> fft_intensity_subtracted;
+  std::vector<double> fft_y_intensity_histogram;
+  std::vector<double> fft_x_intensity_histogram;
+  std::vector<double> kf_intensity;
+  std::vector<double> kf_intensity_normalized;
+  std::vector<double> kf_intensity_subtracted;
+  std::vector<double> kf_y_intensity_histogram;
+  std::vector<double> kf_x_intensity_histogram;
 };
 #endif // STRUCTS_H

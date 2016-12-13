@@ -3,8 +3,7 @@
 #include "filter/kalman.hpp"
 #include <Eigen/Dense>
 
-Filtering::Filtering() {
-}
+Filtering::Filtering() {}
 
 void Filtering::fft(aoi *a) {
   arma::vec X(a->intensity);
@@ -12,7 +11,7 @@ void Filtering::fft(aoi *a) {
   for (unsigned long long i = 0; i < static_cast<unsigned long long>(Y.size());
        i++) {
     // Set the 90% of the higher frequency to zero
-    if (i > static_cast<unsigned long long>(Y.size()) / 10) {
+    if (i > static_cast<unsigned long long>(Y.size()) / 3) {
       Y[i].real(0.0);
       Y[i].imag(0.0);
     }
@@ -70,28 +69,42 @@ void Filtering::kalman_filter(aoi *a) {
   double t = 0;
   Eigen::VectorXd y(m);
   a->x.push_back(0.0);
-  a->average_kf_intensity.push_back(kf.state().transpose()[0]);
+  a->kf_intensity.push_back(kf.state().transpose()[0]);
   for (unsigned long i = 0; i < measurements.size(); i++) {
     t += dt;
     y << measurements[i];
     kf.update(y);
     a->x.push_back(t);
-    a->average_kf_intensity.push_back(kf.state().transpose()[0]);
+    a->kf_intensity.push_back(kf.state().transpose()[0]);
   }
 }
 
 void Filtering::subtract_consecutive_intensities(aoi *a) {
-  for (unsigned j = 0; j < a->average_intensity_normalized.size(); j++) {
+  //  qDebug() << "Kalman Subtract Started";
+  a->kf_intensity_subtracted = subtract(a->kf_intensity_normalized);
+  //  qDebug() << "Kalman Subtracted";
+  a->fft_intensity_subtracted = subtract(a->fft_intensity_normalized);
+  //  qDebug() << "FFT Subtracted";
+}
+
+std::vector<double> Filtering::subtract(std::vector<double> arr) {
+  std::vector<double> ret_array;
+  for (unsigned j = 0; j < arr.size(); j++) {
     if (j > 0) {
-      double diff = a->average_intensity_normalized[j - 1] -
-                    a->average_intensity_normalized[j];
-      a->average_intensity_subtracted.push_back(diff);
+      double diff = arr[j - 1] - arr[j];
+      ret_array.push_back(diff);
     }
   }
+  return ret_array;
 }
 
 void Filtering::reduce_dimensionality(aoi *a) {
-  arma::vec v = arma::vec(a->average_intensity_subtracted);
+  a->kf_x_intensity_histogram = subtract(a->kf_intensity_subtracted);
+  a->fft_x_intensity_histogram = subtract(a->fft_intensity_subtracted);
+}
+
+std::vector<double> Filtering::reduce(std::vector<double> arr) {
+  arma::vec v = arma::vec(arr);
   unsigned long long width =
       static_cast<unsigned long long>(floor(v.size() / 100));
   double fudge = v.size() % 100;
@@ -114,40 +127,60 @@ void Filtering::reduce_dimensionality(aoi *a) {
     }
     c += 1;
   }
-  a->average_x_intensity_reduced = reduced_vec;
+  return reduced_vec;
 }
 
 void Filtering::normalize(aoi *a) {
-  a->average_intensity_normalized = normalize_vector(a->average_kf_intensity);
+  a->kf_intensity_normalized = normalize_vector(a->kf_intensity);
+  a->fft_intensity_normalized = normalize_vector(a->fft_intensity);
 }
 
 std::vector<double> Filtering::normalize_vector(std::vector<double> arr) {
   std::vector<double> ret_arr;
-  double minimum = arr[0];
+  double minimum =
+      (arr[arr.size() - 1] + arr[arr.size() - 2] + arr[arr.size() - 3] +
+       arr[arr.size() - 4] + arr[arr.size() - 5]) /
+      5;
   double maximum = arr[0];
   for (unsigned long i = 0; i < arr.size(); i++) {
     if (arr[i] > maximum) {
       maximum = arr[i];
     }
-    if (arr[i] < minimum) {
-      minimum = arr[i];
-    }
+    //    if (arr[i] < minimum) {
+    //      minimum = arr[i];
+    //    }
   }
+
+  bool found = false;
   for (unsigned j = 0; j < arr.size(); j++) {
-    ret_arr.push_back((arr[j] - minimum) / (maximum - minimum));
+    double value = (arr[j] - minimum) / (maximum - minimum);
+    if (found == false) {
+      if (value > 0) {
+        ret_arr.push_back(value);
+        found = true;
+      }
+    } else {
+      ret_arr.push_back(value);
+    }
   }
   return ret_arr;
 }
 
 void Filtering::calculate_histogram(aoi *a) {
-  arma::vec v1 = arma::vec(a->average_intensity_normalized);
+  a->kf_y_intensity_histogram = histogram(a->kf_intensity_normalized);
+  a->fft_y_intensity_histogram = histogram(a->fft_intensity_normalized);
+}
+
+std::vector<double> Filtering::histogram(std::vector<double> arr) {
+  arma::vec v1 = arma::vec(arr);
   arma::uvec result1 = arma::hist(v1, 100);
+  std::vector<double> vec;
   for (unsigned long i = 0; i < result1.size(); ++i) {
     if (result1[i] > 1) {
-      a->average_y_intensity_histogram.push_back(1.0);
+      vec.push_back(1.0);
     } else {
-      a->average_y_intensity_histogram.push_back(0.0);
+      vec.push_back(0.0);
     }
-    a->average_x.push_back(i + 1);
   }
+  return vec;
 }
