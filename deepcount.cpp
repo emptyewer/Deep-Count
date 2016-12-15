@@ -1,7 +1,6 @@
 #include "deepcount.h"
 #include "fileio/read_mat.h"
 #include "fileio/write.h"
-#include "filter/kalman.hpp"
 #include "helpers/filtering.h"
 #include "ui_deepcount.h"
 #include <QFileDialog>
@@ -22,11 +21,13 @@ void DeepCount::on_load_directory_clicked() {
 
   if (dir != NULL) {
     listFiles(QDir(dir), &file_list);
+    ui->root_dir->setText(dir);
+    read_aois();
+    process_data();
+    display_aoi();
     enable_all = true;
   }
-  ui->root_dir->setText(dir);
-  read_aois();
-  display_aoi();
+
   //  foreach (QString str, file_list) { qDebug() << str; }
 }
 
@@ -47,7 +48,8 @@ void DeepCount::listFiles(QDir root_dir, QList<QString> *dir_list) {
 void DeepCount::read_aois() {
   bool processed = false;
   foreach (QString s, Write().get_processed_files()) {
-    if (QString::compare(s, file_list[current_file], Qt::CaseSensitive) == 0) {
+    if (QString::compare(s, file_list.at(current_file), Qt::CaseSensitive) ==
+        0) {
       processed = true;
       ui->statusBar->showMessage("Skipped over already processed files...",
                                  5000);
@@ -67,28 +69,25 @@ void DeepCount::read_aois() {
     QTextStream(&str) << current_file + 1 << " of " << file_list.size();
     ui->number_of_files->setText(str);
     ui->current_dir->setText(
-        QFileInfo(file_list[current_file]).dir().dirName());
-    ui->file_name->setText(QFileInfo(file_list[current_file]).fileName());
-    QByteArray file_name = file_list[current_file].toLocal8Bit();
+        QFileInfo(file_list.at(current_file)).dir().dirName());
+    ui->file_name->setText(QFileInfo(file_list.at(current_file)).fileName());
+    QByteArray file_name = file_list.at(current_file).toLocal8Bit();
     char *file_name_buffer = file_name.data();
     aois = read_mat_files.read_aois(file_name_buffer);
+  }
+}
+
+void DeepCount::process_data() {
+  if (aois.at(current_frame).csum_intensity.size() == 0) {
     Filtering filter = Filtering();
-    //    qDebug() << "Begin Filtering";
-    for (unsigned long i = 0; i < read_mat_files.get_number_of_aois(); i++) {
-      filter.kalman_filter(&aois[i]);
-      //      qDebug() << "Kalman";
-      filter.fft(&aois[i]);
-      //      qDebug() << "FFT";
-      filter.normalize(&aois[i]);
-      //      qDebug() << "Normalize";
-      filter.calculate_histogram(&aois[i]);
-      //      qDebug() << "Y Histogram";
-      filter.subtract_consecutive_intensities(&aois[i]);
-      //      qDebug() << "X_ Subtract";
-      filter.reduce_dimensionality(&aois[i]);
-      //      qDebug() << "X Histogram";
-    }
-    //    qDebug() << "Finished Filtering";
+    filter.detect_changepoints(&aois.at(current_frame));
+    filter.normalize(&aois.at(current_frame));
+    //      qDebug() << "Normalize";
+    filter.calculate_histogram(&aois.at(current_frame));
+    //      qDebug() << "Y Histogram";
+    filter.subtract_consecutive_intensities(&aois.at(current_frame));
+    //      qDebug() << "X_ Subtract";
+    filter.reduce_dimensionality(&aois.at(current_frame));
   }
 }
 
@@ -96,7 +95,7 @@ void DeepCount::display_aoi() {
   QString str;
   QTextStream(&str) << current_frame + 1 << " of " << aois.size();
   ui->numbe_of_aois->setText(str);
-  if (aois[current_frame].classified != true) {
+  if (aois.at(current_frame).classified != true) {
     ui->classified->setText(QString::number(current_aoi_count));
   }
   plot();
@@ -111,18 +110,23 @@ void DeepCount::plot() {
     range.push_back(static_cast<double>(i));
   }
   QVector<double> xvalues =
-      QVector<double>::fromStdVector(aois[current_frame].x);
+      QVector<double>::fromStdVector(aois.at(current_frame).x);
   QVector<double> ave_xvalues = QVector<double>::fromStdVector(range);
   QVector<double> intensity =
-      QVector<double>::fromStdVector(aois[current_frame].intensity);
+      QVector<double>::fromStdVector(aois.at(current_frame).intensity);
+  QVector<double> csum_intensity =
+      QVector<double>::fromStdVector(aois.at(current_frame).csum_intensity);
   QVector<double> xhist = QVector<double>::fromStdVector(
-      aois[current_frame].fft_x_intensity_histogram);
+      aois.at(current_frame).csum_x_intensity_histogram);
   QVector<double> yhist = QVector<double>::fromStdVector(
-      aois[current_frame].fft_y_intensity_histogram);
+      aois.at(current_frame).csum_y_intensity_histogram);
 
   ui->trace_plot->addGraph();
   ui->trace_plot->graph(0)->setData(xvalues, intensity);
   ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255)));
+  ui->trace_plot->addGraph();
+  ui->trace_plot->graph(1)->setData(xvalues, csum_intensity);
+  ui->trace_plot->graph(1)->setPen(QPen(QColor(0, 189, 242, 255), 2));
 
   ui->trace_plot->xAxis->setLabel("Time (*)");
   ui->trace_plot->yAxis->setLabel("Intensity");
@@ -144,8 +148,8 @@ void DeepCount::plot() {
 
 void DeepCount::refresh_plots() {
   ui->trace_plot->rescaleAxes(true);
-  ui->x_plot->yAxis->setRange(-1.0, 1.0);
-  ui->y_plot->yAxis->setRange(0, 1.0);
+  ui->x_plot->yAxis->setRange(0.0, 1.05);
+  ui->y_plot->yAxis->setRange(0, 1.05);
   ui->trace_plot->replot();
   ui->x_plot->replot();
   ui->y_plot->replot();
@@ -187,12 +191,18 @@ void DeepCount::on_next_clicked() {
   record_selection();
   if (current_frame < aois.size() - 1) {
     current_frame += 1;
-    if (aois[current_frame].classified != true) {
+//    std::cout << current_frame << "\n";
+//    for (int i = 0; i < aois.at(current_frame).intensity.size(); i++) {
+//      std::cout << aois.at(current_frame).intensity[i] << ",";
+//    }
+//    std::cout << "\n-------\n";
+    process_data();
+    if (aois.at(current_frame).classified != true) {
       current_aoi_count += 1;
     }
   } else {
     Write().data_to_file(&aois);
-    Write().processed_to_file(file_list[current_file]);
+    Write().processed_to_file(file_list.at(current_file));
     ui->statusBar->showMessage("Saving data and current progress.", 5000);
     aois.clear();
     current_file += 1;
@@ -207,10 +217,11 @@ void DeepCount::on_previous_clicked() {
   if (current_frame == 0) {
     current_frame = 0;
   } else {
-    if (aois[current_frame].classified != true) {
+    if (aois.at(current_frame).classified != true) {
       current_aoi_count -= 1;
     }
     current_frame -= 1;
+    process_data();
   }
   clear_graphs();
   display_aoi();
@@ -229,28 +240,30 @@ void DeepCount::setCustomStyle() {
 
 void DeepCount::keyPressEvent(QKeyEvent *event) {
   if (enable_all) {
-    std::vector<double> range;
-    unsigned int i = 0;
-    for (i = 0; i < 100; i++) {
-      range.push_back(static_cast<double>(i));
-    }
     QVector<double> xvalues =
-        QVector<double>::fromStdVector(aois[current_frame].x);
-    QVector<double> fft_intensity = QVector<double>::fromStdVector(
-        aois[current_frame].fft_intensity_normalized);
+        QVector<double>::fromStdVector(aois.at(current_frame).x);
     QVector<double> intensity =
-        QVector<double>::fromStdVector(aois[current_frame].intensity);
+        QVector<double>::fromStdVector(aois.at(current_frame).intensity);
+    QVector<double> csum_intensity =
+        QVector<double>::fromStdVector(aois.at(current_frame).csum_intensity);
+    QVector<double> csum_intensity_normalized = QVector<double>::fromStdVector(
+        aois.at(current_frame).csum_intensity_normalized);
     switch (event->key()) {
     case 16777235: // UP
-      ui->trace_plot->graph(0)->clearData();
-      ui->trace_plot->graph(0)->setData(xvalues, fft_intensity);
-      ui->trace_plot->graph(0)->setPen(QPen(QColor(0, 189, 242, 255)));
+      ui->trace_plot->clearGraphs();
+      ui->trace_plot->addGraph();
+      ui->trace_plot->graph(0)->setData(xvalues, intensity);
+      ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255)));
+      ui->trace_plot->addGraph();
+      ui->trace_plot->graph(1)->setData(xvalues, csum_intensity);
+      ui->trace_plot->graph(1)->setPen(QPen(QColor(0, 189, 242, 255), 2));
       refresh_plots();
       break;
     case 16777237: // Down
-      ui->trace_plot->graph(0)->clearData();
-      ui->trace_plot->graph(0)->setData(xvalues, intensity);
-      ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255)));
+      ui->trace_plot->clearGraphs();
+      ui->trace_plot->addGraph();
+      ui->trace_plot->graph(0)->setData(xvalues, csum_intensity_normalized);
+      ui->trace_plot->graph(0)->setPen(QPen(QColor(238, 31, 95, 255), 2));
       refresh_plots();
       break;
     case 16777236:
@@ -294,8 +307,8 @@ void DeepCount::keyPressEvent(QKeyEvent *event) {
 }
 
 void DeepCount::update_step_count() {
-  if (aois[current_frame].classified == true) {
-    switch (aois[current_frame].step_number) {
+  if (aois.at(current_frame).classified == true) {
+    switch (aois.at(current_frame).step_number) {
     case 0:
       ui->zero_step->setChecked(true);
       break;
@@ -332,25 +345,25 @@ void DeepCount::record_selection() {
   QList<QRadioButton *> list =
       ui->step_count_group->findChildren<QRadioButton *>();
   for (int i = 0; i < list.size(); i++) {
-    if (list[i]->isChecked()) {
-      if (list[i]->objectName() == "zero_step") {
-        aois[current_frame].step_number = 0;
-      } else if (list[i]->objectName() == "one_step") {
-        aois[current_frame].step_number = 1;
-      } else if (list[i]->objectName() == "two_step") {
-        aois[current_frame].step_number = 2;
-      } else if (list[i]->objectName() == "three_step") {
-        aois[current_frame].step_number = 3;
-      } else if (list[i]->objectName() == "four_step") {
-        aois[current_frame].step_number = 4;
-      } else if (list[i]->objectName() == "five_step") {
-        aois[current_frame].step_number = 5;
-      } else if (list[i]->objectName() == "skip_step") {
-        aois[current_frame].step_number = 6;
+    if (list.at(i)->isChecked()) {
+      if (list.at(i)->objectName() == "zero_step") {
+        aois.at(current_frame).step_number = 0;
+      } else if (list.at(i)->objectName() == "one_step") {
+        aois.at(current_frame).step_number = 1;
+      } else if (list.at(i)->objectName() == "two_step") {
+        aois.at(current_frame).step_number = 2;
+      } else if (list.at(i)->objectName() == "three_step") {
+        aois.at(current_frame).step_number = 3;
+      } else if (list.at(i)->objectName() == "four_step") {
+        aois.at(current_frame).step_number = 4;
+      } else if (list.at(i)->objectName() == "five_step") {
+        aois.at(current_frame).step_number = 5;
+      } else if (list.at(i)->objectName() == "skip_step") {
+        aois.at(current_frame).step_number = 6;
       }
     }
-    if (aois[current_frame].classified == false) {
-      aois[current_frame].classified = true;
+    if (aois.at(current_frame).classified == false) {
+      aois.at(current_frame).classified = true;
     }
   }
 }

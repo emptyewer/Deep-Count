@@ -23,7 +23,6 @@ SOURCES += main.cpp\
     helpers/filtering.cpp \
     plot/qcustomplot.cpp \
     plot/zcustomplot.cpp \
-    filter/kalman.cpp \
     fileio/write.cpp
 
 HEADERS  += deepcount.h \
@@ -34,7 +33,6 @@ HEADERS  += deepcount.h \
     helpers/filtering.h \
     plot/qcustomplot.h \
     plot/zcustomplot.h \
-    filter/kalman.hpp \
     fileio/write.h
 
 FORMS    += deepcount.ui
@@ -54,7 +52,7 @@ macx: LIBS += -L$$PWD/../../../../../../usr/local/Cellar/armadillo/7.500.2/lib/ 
 INCLUDEPATH += $$PWD/../../../../../../usr/local/Cellar/armadillo/7.500.2/include
 DEPENDPATH += $$PWD/../../../../../../usr/local/Cellar/armadillo/7.500.2/include
 
-macx: INCLUDEPATH += /usr/local/Cellar/eigen/3.3.0/include/eigen3
+#macx: INCLUDEPATH += /usr/local/Cellar/eigen/3.3.0/include/eigen3
 
 macx: LIBS += -L$$PWD/../../../../../../usr/local/Cellar/fann/2.2.0/lib/ -lfann.2.2.0
 

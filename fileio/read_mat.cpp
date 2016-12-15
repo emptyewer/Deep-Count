@@ -25,7 +25,7 @@ std::vector<aoi> ReadMat::read_aois(const char *inputfile) {
             struct aoi temp = aoi();
             aois.push_back(temp);
           }
-          //          qDebug() << "Number of AOIs : " << number_of_aois;
+//                    qDebug() << "Number of AOIs : " << number_of_aois;
         }
         if (std::string(fields[i]->name).compare("data") == 0) {
           //          qDebug() << "Data Type : " << fields[i]->data_type;

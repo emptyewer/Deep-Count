@@ -43,6 +43,7 @@ private:
   void update_step_count();
   void record_selection();
   void listFiles(QDir root_dir, QList<QString> *dir_list);
+  void process_data() ;
 
 protected:
   void keyPressEvent(QKeyEvent *event);

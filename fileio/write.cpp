@@ -48,54 +48,44 @@ QString Write::check_documents_directory() {
 
 void Write::data_to_file(std::vector<aoi> *v) {
   QString path = check_documents_directory();
-  QString kf_file_path = QDir(path).filePath("kalman_filtered_data.csv");
-  QString fftf_file_path = QDir(path).filePath("fft_filtered_data.csv");
-  QByteArray kf_file_name = kf_file_path.toLocal8Bit();
-  char *kf_file_name_buffer = kf_file_name.data();
-  FILE *kff = fopen(kf_file_name_buffer, "aw");
+  QString csum_file_path = QDir(path).filePath("csum_filtered_data.csv");
+  QByteArray csum_file_name = csum_file_path.toLocal8Bit();
+  char *csum_file_name_buffer = csum_file_name.data();
+  FILE *csumf = fopen(csum_file_name_buffer, "aw");
 
-  QByteArray fftf_file_name = fftf_file_path.toLocal8Bit();
-  char *fftf_file_name_buffer = fftf_file_name.data();
-  FILE *fftf = fopen(fftf_file_name_buffer, "aw");
-  if (kff == NULL || fftf == NULL) {
+  if (csumf == NULL) {
     printf("cant save data");
     return;
   }
 
   for (unsigned long i = 0; i < v->size(); i++) {
-    std::string kf_data_str = "";
-    std::string fft_data_str = "";
+    std::string csum_data_str = "";
     std::string value_str = "";
     aoi a = v->at(i);
-    for (unsigned long j = 0; j < a.kf_x_intensity_histogram.size(); j++) {
-      kf_data_str += std::to_string(a.kf_x_intensity_histogram[j]);
-      fft_data_str += std::to_string(a.fft_x_intensity_histogram[j]);
-      kf_data_str += ",";
-      fft_data_str += ",";
+    for (unsigned long j = 0; j < a.csum_x_intensity_histogram.size(); j++) {
+      csum_data_str += std::to_string(a.csum_x_intensity_histogram.at(j));
+      csum_data_str += ",";
     }
-    for (unsigned long k = 0; k < a.kf_y_intensity_histogram.size(); k++) {
-      kf_data_str += std::to_string(a.kf_y_intensity_histogram[k]);
-      fft_data_str += std::to_string(a.fft_y_intensity_histogram[k]);
-      if (k != (a.kf_y_intensity_histogram.size() - 1)) {
-        kf_data_str += ',';
-        fft_data_str += ',';
+
+    for (unsigned long k = 0; k < a.csum_y_intensity_histogram.size(); k++) {
+
+      csum_data_str += std::to_string(a.csum_y_intensity_histogram.at(k));
+      if (k != (a.csum_y_intensity_histogram.size() - 1)) {
+          csum_data_str += ",";
       }
     }
     std::vector<int> values(7, 0);
-    values[a.step_number] = 1;
+    values.at(a.step_number) = 1;
     for (unsigned long l = 0; l < values.size(); l++) {
-      value_str += std::to_string(values[l]);
+      value_str += std::to_string(values.at(l));
       if (l != (values.size() - 1)) {
         value_str += ',';
       }
     }
-    fprintf(kff, "%s\n", kf_data_str.c_str());
-    fprintf(fftf, "%s\n", fft_data_str.c_str());
-    fprintf(kff, "%s\n", value_str.c_str());
-    fprintf(fftf, "%s\n", value_str.c_str());
+    fprintf(csumf, "%s\n", csum_data_str.c_str());
+    fprintf(csumf, "%s\n", value_str.c_str());
   }
-  fclose(kff);
-  fclose(fftf);
+  fclose(csumf);
 
   int old_count = get_processed_aoi_count();
   int new_count = old_count + static_cast<int> (v->size());
